@@ -18,6 +18,7 @@ try:
 except ImportError:
     get_encodings_from_content = None
 from requests import HTTPError
+from pyspider.libs import utils
 
 
 class Response(object):
@@ -31,29 +32,37 @@ class Response(object):
         self.cookies = {}
         self.error = None
         self.save = None
+        self.js_script_result = None
         self.time = 0
 
     def __repr__(self):
         return u'<Response [%d]>' % self.status_code
 
     def __bool__(self):
-        """Returns true if :attr:`status_code` is 'OK'."""
+        """Returns true if `status_code` is 200 and no error"""
         return self.ok
 
     def __nonzero__(self):
-        """Returns true if :attr:`status_code` is 'OK'."""
+        """Returns true if `status_code` is 200 and no error."""
         return self.ok
 
     @property
     def ok(self):
+        """Return true if `status_code` is 200 and no error."""
         try:
             self.raise_for_status()
-        except HTTPError:
+        except:
             return False
         return True
 
     @property
     def encoding(self):
+        """
+        encoding of Response.content.
+
+        if Response.encoding is None, encoding will be guessed
+        by header or content or chardet if available.
+        """
         if hasattr(self, '_encoding'):
             return self._encoding
 
@@ -68,7 +77,10 @@ class Response(object):
 
         # Try charset from content
         if not encoding and get_encodings_from_content:
-            encoding = get_encodings_from_content(self.content)
+            if six.PY3:
+                encoding = get_encodings_from_content(utils.pretty_unicode(self.content[:100]))
+            else:
+                encoding = get_encodings_from_content(self.content)
             encoding = encoding and encoding[0] or None
 
         # Fallback to auto-detected encoding.
@@ -83,12 +95,17 @@ class Response(object):
 
     @encoding.setter
     def encoding(self, value):
+        """
+        set encoding of content manually
+        it will overwrite the guessed encoding
+        """
         self._encoding = value
         self._text = None
 
     @property
     def text(self):
-        """Content of the response, in unicode.
+        """
+        Content of the response, in unicode.
 
         if Response.encoding is None and chardet module is available, encoding
         will be guessed.
@@ -118,7 +135,7 @@ class Response(object):
 
     @property
     def json(self):
-        """Returns the json-encoded content of a request, if any."""
+        """Returns the json-encoded content of the response, if any."""
         if hasattr(self, '_json'):
             return self._json
         try:
@@ -129,11 +146,17 @@ class Response(object):
 
     @property
     def doc(self):
-        """Returns a PyQuery object of a request's content"""
+        """Returns a PyQuery object of the response's content"""
         if hasattr(self, '_doc'):
             return self._doc
-        parser = lxml.html.HTMLParser(encoding=self.encoding)
-        elements = lxml.html.fromstring(self.content, parser=parser)
+        try:
+            parser = lxml.html.HTMLParser(encoding=self.encoding)
+            elements = lxml.html.fromstring(self.content, parser=parser)
+        except LookupError:
+            # lxml would raise LookupError when encoding not supported
+            # try fromstring without encoding instead.
+            # on windows, unicode is not availabe as encoding for lxml
+            elements = lxml.html.fromstring(self.content)
         if isinstance(elements, lxml.etree._ElementTree):
             elements = elements.getroot()
         doc = self._doc = PyQuery(elements)
@@ -143,7 +166,9 @@ class Response(object):
     def raise_for_status(self, allow_redirects=True):
         """Raises stored :class:`HTTPError` or :class:`URLError`, if one occurred."""
 
-        if self.error:
+        if self.status_code == 304:
+            return
+        elif self.error:
             http_error = HTTPError(self.error)
         elif (self.status_code >= 300) and (self.status_code < 400) and not allow_redirects:
             http_error = HTTPError('%s Redirection' % (self.status_code))
@@ -175,5 +200,6 @@ def rebuild_response(r):
     response.error = r.get('error')
     response.time = r.get('time', 0)
     response.orig_url = r.get('orig_url', response.url)
+    response.js_script_result = r.get('js_script_result')
     response.save = r.get('save')
     return response

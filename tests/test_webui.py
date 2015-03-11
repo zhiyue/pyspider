@@ -24,6 +24,11 @@ class TestWebUI(unittest.TestCase):
         shutil.rmtree('./data/tests', ignore_errors=True)
         os.makedirs('./data/tests')
 
+        import tests.data_test_webpage
+        import httpbin
+        self.httpbin_thread = utils.run_in_subprocess(httpbin.app.run, port=14887)
+        self.httpbin = 'http://127.0.0.1:14887'
+
         ctx = run.cli.make_context('test', [
             '--taskdb', 'sqlite+taskdb:///data/tests/task.db',
             '--projectdb', 'sqlite+projectdb:///data/tests/projectdb.db',
@@ -64,6 +69,9 @@ class TestWebUI(unittest.TestCase):
             each.quit()
         time.sleep(1)
 
+        self.httpbin_thread.terminate()
+        self.httpbin_thread.join()
+
         shutil.rmtree('./data/tests', ignore_errors=True)
 
     def test_10_index_page(self):
@@ -83,7 +91,9 @@ class TestWebUI(unittest.TestCase):
         self.__class__.task_content = json.loads(m.group(1))
         m = re.search(r'var script_content = (.*);\n', utils.text(rv.data))
         self.assertIsNotNone(m)
-        self.__class__.script_content = json.loads(m.group(1))
+        self.__class__.script_content = (json.loads(m.group(1))
+                                         .replace('http://scrapy.org/',
+                                                  'http://127.0.0.1:14887/pyspider/test.html'))
 
     def test_30_run(self):
         rv = self.app.post('/debug/test_project/run', data={
@@ -94,6 +104,16 @@ class TestWebUI(unittest.TestCase):
         data = json.loads(utils.text(rv.data))
         self.assertIn(b'follows', rv.data)
         self.assertGreater(len(data['follows']), 0)
+        self.__class__.task_content2 = data['follows'][0]
+
+    def test_35_run_http_task(self):
+        rv = self.app.post('/debug/test_project/run', data={
+            'script': self.script_content,
+            'task': json.dumps(self.task_content2)
+        })
+        self.assertEqual(rv.status_code, 200)
+        data = json.loads(utils.text(rv.data))
+        self.assertIn(b'follows', rv.data)
 
     def test_40_save(self):
         rv = self.app.post('/debug/test_project/save', data={
@@ -176,7 +196,7 @@ class TestWebUI(unittest.TestCase):
         for i in range(30):
             time.sleep(1)
             if self.rpc.counter('5m', 'sum')\
-                    .get('test_project', {}).get('success', 0) > 3:
+                    .get('test_project', {}).get('success', 0) > 5:
                 break
 
         rv = self.app.get('/counter?time=5m&type=sum')
@@ -271,13 +291,87 @@ class TestWebUI(unittest.TestCase):
         self.assertEqual(rv.status_code, 200)
         self.assertIn(b'url,title,url', rv.data)
 
+    def test_h000_auth(self):
+        ctx = run.webui.make_context('webui', [
+            '--scheduler-rpc', 'http://localhost:23333/',
+            '--username', 'binux',
+            '--password', '4321',
+        ], self.ctx)
+        app = run.webui.invoke(ctx)
+        self.__class__.app = app.test_client()
+        self.__class__.rpc = app.config['scheduler_rpc']
+
+    def test_h010_change_group(self):
+        rv = self.app.post('/update', data={
+            'name': 'group',
+            'value': 'lock',
+            'pk': 'test_project'
+        })
+        self.assertEqual(rv.status_code, 200)
+        self.assertIn(b'ok', rv.data)
+
+        rv = self.app.get('/')
+        self.assertEqual(rv.status_code, 200)
+        self.assertIn(b'lock', rv.data)
+
+    def test_h020_change_group_lock_failed(self):
+        rv = self.app.post('/update', data={
+            'name': 'group',
+            'value': '',
+            'pk': 'test_project'
+        })
+        self.assertEqual(rv.status_code, 401)
+
+    def test_h020_change_group_lock_ok(self):
+        rv = self.app.post('/update', data={
+            'name': 'group',
+            'value': 'test_binux',
+            'pk': 'test_project'
+        }, headers={
+            'Authorization': 'Basic YmludXg6NDMyMQ=='
+        })
+        self.assertEqual(rv.status_code, 200)
+
+    def test_h030_need_auth(self):
+        ctx = run.webui.make_context('webui', [
+            '--scheduler-rpc', 'http://localhost:23333/',
+            '--username', 'binux',
+            '--password', '4321',
+            '--need-auth',
+        ], self.ctx)
+        app = run.webui.invoke(ctx)
+        self.__class__.app = app.test_client()
+        self.__class__.rpc = app.config['scheduler_rpc']
+
+    def test_h040_auth_fail(self):
+        rv = self.app.get('/')
+        self.assertEqual(rv.status_code, 401)
+
+    def test_h050_auth_fail2(self):
+        rv = self.app.get('/', headers={
+            'Authorization': 'Basic Ymlasdfsd'
+        })
+        self.assertEqual(rv.status_code, 401)
+
+    def test_h060_auth_fail3(self):
+        rv = self.app.get('/', headers={
+            'Authorization': 'Basic YmludXg6MQ=='
+        })
+        self.assertEqual(rv.status_code, 401)
+
+    def test_h070_auth_ok(self):
+        rv = self.app.get('/', headers={
+            'Authorization': 'Basic YmludXg6NDMyMQ=='
+        })
+        self.assertEqual(rv.status_code, 200)
+
     def test_x0_disconnected_scheduler(self):
         ctx = run.webui.make_context('webui', [
             '--scheduler-rpc', 'http://localhost:23458/'
         ], self.ctx)
         app = run.webui.invoke(ctx)
-        self.app = app.test_client()
-        self.rpc = app.config['scheduler_rpc']
+        self.__class__.app = app.test_client()
+        self.__class__.rpc = app.config['scheduler_rpc']
 
     def test_x10_project_update(self):
         rv = self.app.post('/update', data={

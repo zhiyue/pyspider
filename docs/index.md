@@ -1,4 +1,4 @@
-pyspider [![Build Status][Build Status]][Travis CI] [![Coverage Status][Coverage Status]][Coverage] [![Try It Now!][Try]][Demo]
+pyspider [![Build Status][Build Status]][Travis CI] [![Coverage Status][Coverage Status]][Coverage] [![Try][Try]][Demo]
 ========
 
 A Powerful Spider(Web Crawler) System in Python. **[TRY IT NOW!][Demo]**
@@ -7,7 +7,7 @@ A Powerful Spider(Web Crawler) System in Python. **[TRY IT NOW!][Demo]**
 - Python 2&3
 - Powerful WebUI with script editor, task monitor, project manager and result viewer
 - Javascript pages supported!
-- MySQL, MongoDB, SQLite as database backend 
+- MySQL, MongoDB, SQLite, PostgreSQL as database backend 
 - Task priority, retry, periodical, recrawl by age and more
 - Distributed architecture
 
@@ -16,26 +16,27 @@ Sample Code
 -----------
 
 ```python
-from libs.base_handler import *
+from pyspider.libs.base_handler import *
+
 
 class Handler(BaseHandler):
-    '''
-    this is a sample handler
-    '''
-    @every(minutes=24*60, seconds=0)
+    crawl_config = {
+    }
+
+    @every(minutes=24 * 60)
     def on_start(self):
         self.crawl('http://scrapy.org/', callback=self.index_page)
 
-    @config(age=10*24*60*60)
+    @config(age=10 * 24 * 60 * 60)
     def index_page(self, response):
-        for each in response.doc('a[href^="http://"]').items():
+        for each in response.doc('a[href^="http"]').items():
             self.crawl(each.attr.href, callback=self.detail_page)
 
     def detail_page(self, response):
         return {
-                "url": response.url,
-                "title": response.doc('title').text(),
-                }
+            "url": response.url,
+            "title": response.doc('title').text(),
+        }
 ```
 
 [![Demo][Demo Img]][Demo]
@@ -44,22 +45,8 @@ class Handler(BaseHandler):
 Installation
 ------------
 
-* python 2.6, 2.7, 3.3, 3.4
-* `pip install --allow-all-external -r requirements.txt`
-* `./run.py` , visit [http://localhost:5000/](http://localhost:5000/)
-
-if you are using ubuntu, try:
-```
-apt-get install python python-dev python-distribute python-pip libcurl4-openssl-dev libxml2-dev libxslt1-dev python-lxml
-```
-ro install binary packages first.
-
-
-Documents
----------
-
-* [Quickstart](Quickstart)
-* [API Reference](apis/)
+* `pip install pyspider`
+* run command `pyspider`, visit [http://localhost:5000/](http://localhost:5000/)
 
 Contribute
 ----------

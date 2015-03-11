@@ -16,7 +16,7 @@ import traceback
 from flask import render_template, request, json
 from flask.ext import login
 
-from pyspider.libs import utils, sample_handler
+from pyspider.libs import utils, sample_handler, dataurl
 from pyspider.libs.response import rebuild_response
 from pyspider.processor.project_module import ProjectManager, ProjectFinder, ProjectLoader
 from .app import app
@@ -47,8 +47,9 @@ def debug(project):
     if info:
         script = info['script']
     else:
-        script = default_script.replace(
-            '__DATE__', datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        script = (default_script
+                  .replace('__DATE__', datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                  .replace('__PROJECT_NAME__', project))
 
     taskid = request.args.get('taskid')
     if taskid:
@@ -102,7 +103,7 @@ def run(project):
         module = ProjectManager.build_module(project_info, {
             'debugger': True
         })
-        ret = module['instance'].run(module['module'], task, response)
+        ret = module['instance'].run_task(module['module'], task, response)
     except Exception:
         type, value, tb = sys.exc_info()
         tb = utils.hide_me(tb, globals())
@@ -125,6 +126,9 @@ def run(project):
             'time': time.time() - start_time,
         }
         result['fetch_result']['content'] = response.text
+        if (response.headers.get('content-type', '').startswith('image')):
+            result['fetch_result']['dataurl'] = dataurl.encode(
+                response.content, response.headers['content-type'])
 
     try:
         # binary data can't encode to JSON, encode result as unicode obj

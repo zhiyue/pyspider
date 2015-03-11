@@ -4,7 +4,7 @@
 // Created on 2014-10-29 22:12:14
 
 var port, server, service,
-  wait_before_end = 300,
+  wait_before_end = 1000,
   system = require('system'),
   webpage = require('webpage');
 
@@ -24,9 +24,14 @@ if (system.args.length !== 2) {
     //console.debug(JSON.stringify(request, null, 4));
     // check method
     if (request.method == 'GET') {
+      body = "method not allowed!";
       response.statusCode = 403;
-      response.write("method not allowed!");
-      response.close();
+      response.headers = {
+        'Cache': 'no-cache',
+        'Content-Length': body.length
+      };
+      response.write(body);
+      response.closeGracefully();
       return;
     }
 
@@ -53,16 +58,22 @@ if (system.args.length !== 2) {
         finished = false,
         page_loaded = false,
         start_time = Date.now(),
-        end_time = null;
+        end_time = null,
+        script_executed = false,
+        script_result = null;
     page.onInitialized = function() {
-      if (fetch.js_script && fetch.js_run_at === "document-start") {
-        page.evaluateJavaScript(fetch.js_script);
+      if (!script_executed && fetch.js_script && fetch.js_run_at === "document-start") {
+        script_executed = true;
+        console.log('running document-start script.');
+        script_result = page.evaluateJavaScript(fetch.js_script);
       }
     };
     page.onLoadFinished = function(status) {
       page_loaded = true;
-      if (fetch.js_script && fetch.js_run_at !== "document-start") {
-        page.evaluateJavaScript(fetch.js_script);
+      if (!script_executed && fetch.js_script && fetch.js_run_at !== "document-start") {
+        script_executed = true;
+        console.log('running document-end script.');
+        script_result = page.evaluateJavaScript(fetch.js_script);
       }
       console.debug("waiting "+wait_before_end+"ms before finished.");
       end_time = Date.now() + wait_before_end;
@@ -74,7 +85,7 @@ if (system.args.length !== 2) {
     };
     page.onResourceReceived = function(response) {
       console.debug("Request finished: #"+response.id+" ["+response.status+"]"+response.url);
-      if (first_response === null) {
+      if (first_response === null && response.status != 301 && response.status != 302) {
         first_response = response;
       }
       if (page_loaded) {
@@ -94,7 +105,12 @@ if (system.args.length !== 2) {
         setTimeout(make_result, wait_before_end+10, page);
       }
     }
-    setTimeout(make_result, page.settings.resourceTimeout, page);
+    setTimeout(function(page) {
+      if (first_response) {
+        end_time = Date.now()-1;
+        make_result(page);
+      }
+    }, page.settings.resourceTimeout, page);
 
     // send request
     page.open(fetch.url, {
@@ -142,7 +158,7 @@ if (system.args.length !== 2) {
       };
       response.setEncoding("binary");
       response.write(body);
-      response.close();
+      response.closeGracefully();
       finished = true;
       page.close();
     }
@@ -169,6 +185,7 @@ if (system.args.length !== 2) {
         url: page.url,
         cookies: cookies,
         time: (Date.now() - start_time) / 1000,
+        js_script_result: script_result,
         save: fetch.save
       }
     }

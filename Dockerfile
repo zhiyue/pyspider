@@ -15,10 +15,9 @@ ADD ./ /opt/pyspider
 
 # run test
 WORKDIR /opt/pyspider
-RUN IGNORE_MYSQL=1 IGNORE_RABBITMQ=1 IGNORE_MONGODB=1 ./runtest.py
+RUN pip install .
 
 VOLUME ["/opt/pyspider"]
-
-ENTRYPOINT ["python", "run.py"]
+ENTRYPOINT ["pyspider"]
 
 EXPOSE 5000 23333 24444

@@ -21,23 +21,34 @@ class Processor(object):
     EXCEPTION_LIMIT = 3
 
     RESULT_LOGS_LIMIT = 1000
-    RESULT_RESULT_LIMIT = 100
+    RESULT_RESULT_LIMIT = 10
 
-    def __init__(self, projectdb, inqueue, status_queue, newtask_queue, result_queue):
+    def __init__(self, projectdb, inqueue, status_queue, newtask_queue, result_queue,
+                 enable_stdout_capture=True,
+                 enable_projects_import=True):
         self.inqueue = inqueue
         self.status_queue = status_queue
         self.newtask_queue = newtask_queue
         self.result_queue = result_queue
         self.projectdb = projectdb
+        self.enable_stdout_capture = enable_stdout_capture
 
         self._quit = False
         self._exceptions = 10
         self.project_manager = ProjectManager(projectdb, dict(
-            result_queue=self.result_queue))
+            result_queue=self.result_queue,
+            enable_stdout_capture=self.enable_stdout_capture,
+        ))
 
-        self.enable_projects_import()
+        if enable_projects_import:
+            self.enable_projects_import()
 
     def enable_projects_import(self):
+        '''
+        Enable import other project as module
+
+        `from project import project_name`
+        '''
         _self = self
 
         class ProcessProjectFinder(ProjectFinder):
@@ -52,6 +63,7 @@ class Processor(object):
         pass
 
     def on_task(self, task, response):
+        '''Deal one task'''
         start_time = time.time()
         try:
             response = rebuild_response(response)
@@ -62,7 +74,7 @@ class Processor(object):
             if not project_data:
                 logger.error("no such project: %s", project)
                 return False
-            ret = project_data['instance'].run(
+            ret = project_data['instance'].run_task(
                 project_data['module'], task, response)
         except Exception as e:
             logger.exception(e)
@@ -70,6 +82,15 @@ class Processor(object):
         process_time = time.time() - start_time
 
         if not ret.extinfo.get('not_send_status', False):
+            if ret.exception:
+                track_headers = dict(response.headers)
+            else:
+                track_headers = {}
+                for name in ('etag', 'last-modified'):
+                    if name not in response.headers:
+                        continue
+                    track_headers[name] = response.headers[name]
+
             status_pack = {
                 'taskid': task['taskid'],
                 'project': task['project'],
@@ -77,21 +98,22 @@ class Processor(object):
                 'track': {
                     'fetch': {
                         'ok': response.isok(),
+                        'redirect_url': response.url if response.url != response.orig_url else None,
                         'time': response.time,
+                        'error': response.error,
                         'status_code': response.status_code,
-                        'headers': dict(response.headers),
                         'encoding': response.encoding,
-                        'content': (
-                            response.content[:500]
-                            if not response.isok() or ret.exception else
-                            None
-                        ),
+                        'headers': track_headers,
+                        'content': response.text[:500] if ret.exception else None,
                     },
                     'process': {
                         'ok': not ret.exception,
                         'time': process_time,
                         'follows': len(ret.follows),
-                        'result': utils.text(ret.result)[:self.RESULT_RESULT_LIMIT],
+                        'result': (
+                            None if ret.result is None
+                            else utils.text(ret.result)[:self.RESULT_RESULT_LIMIT]
+                        ),
                         'logs': ret.logstr()[-self.RESULT_LOGS_LIMIT:],
                         'exception': ret.exception,
                     },
@@ -104,7 +126,8 @@ class Processor(object):
 
         # FIXME: unicode_obj should used in scheduler before store to database
         # it's used here for performance.
-        self.newtask_queue.put([utils.unicode_obj(newtask) for newtask in ret.follows])
+        if ret.follows:
+            self.newtask_queue.put([utils.unicode_obj(newtask) for newtask in ret.follows])
 
         for project, msg, url in ret.messages:
             self.inqueue.put(({
@@ -120,7 +143,7 @@ class Processor(object):
                 'save': (task['project'], msg),
             }))
 
-        if response.error or ret.exception:
+        if ret.exception:
             logger_func = logger.error
         else:
             logger_func = logger.info
@@ -131,9 +154,13 @@ class Processor(object):
         return True
 
     def quit(self):
+        '''Set quit signal'''
         self._quit = True
 
     def run(self):
+        '''Run loop'''
+        logger.info("processor starting...")
+
         while not self._quit:
             try:
                 task, response = self.inqueue.get(timeout=1)

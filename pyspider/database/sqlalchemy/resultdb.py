@@ -30,7 +30,7 @@ class ResultDB(SplitTableMixin, BaseResultDB):
                            Column('taskid', String(64), primary_key=True, nullable=False),
                            Column('url', String(1024)),
                            Column('result', LargeBinary),
-                           Column('updatetime', Float(16))
+                           Column('updatetime', Float(32))
                            )
         self.engine = create_engine(url, convert_unicode=True)
 
@@ -94,6 +94,7 @@ class ResultDB(SplitTableMixin, BaseResultDB):
         columns = [getattr(self.table.c, f, f) for f in fields] if fields else self.table.c
         for task in self.engine.execute(self.table.select()
                                         .with_only_columns(columns=columns)
+                                        .order_by(self.table.c.updatetime.desc())
                                         .offset(offset).limit(limit)
                                         .execution_options(autocommit=True)):
             yield self._parse(result2dict(columns, task))

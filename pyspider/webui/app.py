@@ -7,12 +7,12 @@
 
 import os
 import sys
+import logging
+logger = logging.getLogger("webui")
 
 from six import reraise
-from six.moves import builtins, urllib
-from tornado.wsgi import WSGIContainer
-from tornado.httpserver import HTTPServer
-from tornado.ioloop import IOLoop
+from six.moves import builtins
+from six.moves.urllib.parse import urljoin
 from flask import Flask
 from pyspider.fetcher import tornado_fetcher
 
@@ -23,15 +23,56 @@ if os.name == 'nt':
 
 
 class TornadoFlask(Flask):
-    def run(self, host='0.0.0.0', port=5000):
-        self.ioloop = IOLoop()
-        http_server = HTTPServer(WSGIContainer(app), io_loop=self.ioloop)
-        http_server.listen(port, host)
-        self.ioloop.start()
+    """Flask object running with tornado ioloop"""
+
+    @property
+    def logger(self):
+        return logger
+
+    def run(self, host=None, port=None, debug=None, **options):
+        from werkzeug.serving import make_server, run_with_reloader
+
+        if host is None:
+            host = '127.0.0.1'
+        if port is None:
+            server_name = self.config['SERVER_NAME']
+            if server_name and ':' in server_name:
+                port = int(server_name.rsplit(':', 1)[1])
+            else:
+                port = 5000
+        if debug is not None:
+            self.debug = bool(debug)
+
+        #run_simple(host, port, self, **options)
+        hostname = host
+        port = port
+        application = self
+        use_reloader = self.debug
+        use_debugger = self.debug
+
+        if use_debugger:
+            from werkzeug.debug import DebuggedApplication
+            application = DebuggedApplication(application, True)
+
+        def inner():
+            self.server = make_server(hostname, port, application)
+            self.server.serve_forever()
+
+        if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+            display_hostname = hostname != '*' and hostname or 'localhost'
+            if ':' in display_hostname:
+                display_hostname = '[%s]' % display_hostname
+            self.logger.info('webui running on http://%s:%d/', display_hostname, port)
+
+        if use_reloader:
+            run_with_reloader(inner)
+        else:
+            inner()
 
     def quit(self):
-        if hasattr(self, 'ioloop'):
-            self.ioloop.stop()
+        if hasattr(self, 'server'):
+            self.server.shutdown_signal = True
+        self.logger.info('webui exiting...')
 
 
 app = TornadoFlask('webui',
@@ -55,7 +96,7 @@ def cdn_url_handler(error, endpoint, kwargs):
         # cdn = app.config.get('cdn', 'http://cdn.staticfile.org/')
         # cdn = app.config.get('cdn', '//cdnjs.cloudflare.com/ajax/libs/')
         cdn = app.config.get('cdn', '//cdnjscn.b0.upaiyun.com/libs/')
-        return urllib.parse.urljoin(cdn, path)
+        return urljoin(cdn, path)
     else:
         exc_type, exc_value, tb = sys.exc_info()
         if exc_value is error:

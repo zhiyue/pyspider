@@ -74,39 +74,39 @@ class TestProjectModule(unittest.TestCase):
 
     def test_2_hello(self):
         self.base_task['process']['callback'] = 'hello'
-        ret = self.instance.run(self.module, self.base_task, self.fetch_result)
+        ret = self.instance.run_task(self.module, self.base_task, self.fetch_result)
         self.assertIsNone(ret.exception)
         self.assertEqual(ret.result, "hello world!")
 
     def test_3_echo(self):
         self.base_task['process']['callback'] = 'echo'
-        ret = self.instance.run(self.module, self.base_task, self.fetch_result)
+        ret = self.instance.run_task(self.module, self.base_task, self.fetch_result)
         self.assertIsNone(ret.exception)
         self.assertEqual(ret.result, "test data")
 
     def test_4_saved(self):
         self.base_task['process']['callback'] = 'saved'
-        ret = self.instance.run(self.module, self.base_task, self.fetch_result)
+        ret = self.instance.run_task(self.module, self.base_task, self.fetch_result)
         self.assertIsNone(ret.exception)
         self.assertEqual(ret.result, self.base_task['fetch']['save'])
 
     def test_5_echo_task(self):
         self.base_task['process']['callback'] = 'echo_task'
-        ret = self.instance.run(self.module, self.base_task, self.fetch_result)
+        ret = self.instance.run_task(self.module, self.base_task, self.fetch_result)
         self.assertIsNone(ret.exception)
         self.assertEqual(ret.result, self.project)
 
     def test_6_catch_status_code(self):
         self.fetch_result['status_code'] = 403
         self.base_task['process']['callback'] = 'catch_status_code'
-        ret = self.instance.run(self.module, self.base_task, self.fetch_result)
+        ret = self.instance.run_task(self.module, self.base_task, self.fetch_result)
         self.assertIsNone(ret.exception)
         self.assertEqual(ret.result, 403)
         self.fetch_result['status_code'] = 200
 
     def test_7_raise_exception(self):
         self.base_task['process']['callback'] = 'raise_exception'
-        ret = self.instance.run(self.module, self.base_task, self.fetch_result)
+        ret = self.instance.run_task(self.module, self.base_task, self.fetch_result)
         self.assertIsNotNone(ret.exception)
         logstr = ret.logstr()
         self.assertIn('info', logstr)
@@ -115,7 +115,7 @@ class TestProjectModule(unittest.TestCase):
 
     def test_8_add_task(self):
         self.base_task['process']['callback'] = 'add_task'
-        ret = self.instance.run(self.module, self.base_task, self.fetch_result)
+        ret = self.instance.run_task(self.module, self.base_task, self.fetch_result)
         self.assertIsNone(ret.exception, ret.logstr())
         self.assertEqual(len(ret.follows), 1)
         self.assertEqual(len(ret.messages), 1)
@@ -138,21 +138,21 @@ class TestProjectModule(unittest.TestCase):
         fetch_result['save'] = {
             'tick': 11,
         }
-        ret = self.instance.run(self.module, task, fetch_result)
+        ret = self.instance.run_task(self.module, task, fetch_result)
         logstr = ret.logstr()
         self.assertNotIn('on_cronjob1', logstr)
         self.assertNotIn('on_cronjob2', logstr)
 
         task['fetch']['save']['tick'] = 10
         fetch_result['save'] = task['fetch']['save']
-        ret = self.instance.run(self.module, task, fetch_result)
+        ret = self.instance.run_task(self.module, task, fetch_result)
         logstr = ret.logstr()
         self.assertNotIn('on_cronjob1', logstr)
         self.assertIn('on_cronjob2', logstr)
 
         task['fetch']['save']['tick'] = 60
         fetch_result['save'] = task['fetch']['save']
-        ret = self.instance.run(self.module, task, fetch_result)
+        ret = self.instance.run_task(self.module, task, fetch_result)
         logstr = ret.logstr()
         self.assertIn('on_cronjob1', logstr)
         self.assertIn('on_cronjob2', logstr)
@@ -172,11 +172,17 @@ class TestProjectModule(unittest.TestCase):
         fetch_result = copy.deepcopy(self.fetch_result)
         fetch_result['save'] = task['fetch']['save']
 
-        ret = self.instance.run(self.module, task, fetch_result)
+        ret = self.instance.run_task(self.module, task, fetch_result)
         self.assertEqual(len(ret.follows), 1, ret.logstr())
         for each in ret.follows:
             self.assertEqual(each['url'], 'data:,on_get_info')
             self.assertEqual(each['fetch']['save']['min_tick'], 10)
+
+    def test_30_generator(self):
+        self.base_task['process']['callback'] = 'generator'
+        ret = self.instance.run_task(self.module, self.base_task, self.fetch_result)
+        self.assertIsNone(ret.exception)
+        self.assertIn('generator object', repr(ret.result))
 
 import shutil
 import inspect
@@ -284,9 +290,11 @@ class TestProcessor(unittest.TestCase):
                 "<html><body>"
                 "<a href='http://binux.me'>binux</a>"
                 "<a href='http://binux.me/中文'>binux</a>"
+                "<a href='http://binux.me/1'>1</a>"
+                "<a href='http://binux.me/1'>2</a>"
                 "</body></html>"
             ),
-            "headers": {},
+            "headers": {'a': 'b', 'etag': 'tag'},
             "status_code": 200,
             "url": task['url'],
             "time": 0,
@@ -296,6 +304,65 @@ class TestProcessor(unittest.TestCase):
         self.assertFalse(self.status_queue.empty())
         self.assertFalse(self.newtask_queue.empty())
 
+        status = self.status_queue.get()
+        self.assertEqual(status['track']['fetch']['ok'], True)
+        self.assertEqual(status['track']['fetch']['time'], 0)
+        self.assertEqual(status['track']['fetch']['status_code'], 200)
+        self.assertEqual('tag', status['track']['fetch']['headers']['etag'])
+        self.assertIsNone(status['track']['fetch']['content'])
+        self.assertEqual(status['track']['process']['ok'], True)
+        self.assertGreater(status['track']['process']['time'], 0)
+        self.assertEqual(status['track']['process']['follows'], 3)
+        self.assertIsNone(status['track']['process']['result'])
+        self.assertEqual(status['track']['process']['logs'], '')
+        self.assertIsNone(status['track']['process']['exception'])
+
         tasks = self.newtask_queue.get()
+        self.assertEqual(len(tasks), 3)
         self.assertEqual(tasks[0]['url'], 'http://binux.me/')
         self.assertTrue(tasks[1]['url'].startswith('http://binux.me/%'), task['url'])
+
+    def test_50_fetch_error(self):
+        # clear new task queue
+        while not self.newtask_queue.empty():
+            self.newtask_queue.get()
+        # clear status queue
+        while not self.status_queue.empty():
+            self.status_queue.get()
+
+        task = {
+            "process": {
+                "callback": "index_page"
+            },
+            "project": "test_project",
+            "taskid": "data:,test_fetch_error",
+            "url": "data:,test_fetch_error"
+        }
+
+        fetch_result = {
+            "orig_url": task['url'],
+            "content": "test_fetch_error",
+            "error": "test_fetch_error",
+            "headers": {'a': 'b', 'last-modified': '123'},
+            "status_code": 598,
+            "url": task['url'],
+            "time": 0,
+        }
+
+        self.in_queue.put((task, fetch_result))
+        time.sleep(1)
+        self.assertFalse(self.status_queue.empty())
+        self.assertTrue(self.newtask_queue.empty())
+
+        status = self.status_queue.get()
+        self.assertEqual(status['track']['fetch']['ok'], False)
+        self.assertEqual(status['track']['fetch']['time'], 0)
+        self.assertEqual(status['track']['fetch']['status_code'], 598)
+        self.assertEqual('123', status['track']['fetch']['headers']['last-modified'])
+        self.assertIsNotNone(status['track']['fetch']['content'])
+        self.assertEqual(status['track']['process']['ok'], False)
+        self.assertGreater(status['track']['process']['time'], 0)
+        self.assertEqual(status['track']['process']['follows'], 0)
+        self.assertIsNone(status['track']['process']['result'])
+        self.assertGreater(len(status['track']['process']['logs']), 0)
+        self.assertIsNotNone(status['track']['process']['exception'])
