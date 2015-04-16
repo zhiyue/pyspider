@@ -146,10 +146,11 @@ class Fetcher(object):
         result['time'] = 0
         result['save'] = task.get('fetch', {}).get('save')
         if len(result['content']) < 70:
-            logger.info("[200] %s 0s", url)
+            logger.info("[200] %s:%s %s 0s", task.get('project'), task.get('taskid'), url)
         else:
             logger.info(
-                "[200] data:,%s...[content:%d] 0s",
+                "[200] %s:%s data:,%s...[content:%d] 0s",
+                task.get('project'), task.get('taskid'),
                 result['content'][:70],
                 len(result['content'])
             )
@@ -167,8 +168,9 @@ class Fetcher(object):
             'orig_url': url,
             'url': url,
         }
-        logger.error("[%d] %s, %r %.2fs",
-                     result['status_code'], url, error, result['time'])
+        logger.error("[%d] %s:%s %s, %r %.2fs",
+                     result['status_code'], task.get('project'), task.get('taskid'),
+                     url, error, result['time'])
         callback(type, task, result)
         self.on_result(type, task, result)
         return task, result
@@ -208,9 +210,15 @@ class Fetcher(object):
             proxy_splited = urlsplit(proxy_string)
             if proxy_splited.username:
                 fetch['proxy_username'] = proxy_splited.username
+                if six.PY2:
+                    fetch['proxy_username'] = fetch['proxy_username'].encode('utf8')
             if proxy_splited.password:
                 fetch['proxy_password'] = proxy_splited.password
-            fetch['proxy_host'] = proxy_splited.hostname
+                if six.PY2:
+                    fetch['proxy_password'] = fetch['proxy_password'].encode('utf8')
+            fetch['proxy_host'] = proxy_splited.hostname.encode('utf8')
+            if six.PY2:
+                fetch['proxy_host'] = fetch['proxy_host'].encode('utf8')
             fetch['proxy_port'] = proxy_splited.port or 8080
 
         # etag
@@ -290,9 +298,13 @@ class Fetcher(object):
             if response.error:
                 result['error'] = utils.text(response.error)
             if 200 <= response.code < 300:
-                logger.info("[%d] %s %.2fs", response.code, url, result['time'])
+                logger.info("[%d] %s:%s %s %.2fs", response.code,
+                            task.get('project'), task.get('taskid'),
+                            url, result['time'])
             else:
-                logger.warning("[%d] %s %.2fs", response.code, url, result['time'])
+                logger.warning("[%d] %s:%s %s %.2fs", response.code,
+                               task.get('project'), task.get('taskid'),
+                               url, result['time'])
             callback('http', task, result)
             self.on_result('http', task, result)
             return task, result
@@ -339,7 +351,7 @@ class Fetcher(object):
                 "time": 0,
                 "save": task.get('fetch', {}).get('save')
             }
-            logger.warning("[501] %s 0s", url)
+            logger.warning("[501] %s:%s %s 0s", task.get('project'), task.get('taskid'), url)
             callback('http', task, result)
             self.on_result('http', task, result)
             return task, result
@@ -381,9 +393,11 @@ class Fetcher(object):
                 return handle_error(e)
 
             if result.get('status_code', 200):
-                logger.info("[%d] %s %.2fs", result['status_code'], url, result['time'])
+                logger.info("[%d] %s:%s %s %.2fs", result['status_code'],
+                            task.get('project'), task.get('taskid'), url, result['time'])
             else:
-                logger.error("[%d] %s, %r %.2fs", result['status_code'],
+                logger.error("[%d] %s:%s %s, %r %.2fs", result['status_code'],
+                             task.get('project'), task.get('taskid'),
                              url, result['content'], result['time'])
             callback('phantomjs', task, result)
             self.on_result('phantomjs', task, result)

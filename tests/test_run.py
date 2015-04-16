@@ -153,7 +153,7 @@ class TestRun(unittest.TestCase):
     def test_80_docker_phantomjs(self):
         try:
             os.environ['PHANTOMJS_NAME'] = 'phantomjs'
-            os.environ['PHANTOMJS_PORT'] = 'tpc://binux:25678'
+            os.environ['PHANTOMJS_PORT_25555_TCP'] = 'tpc://binux:25678'
             ctx = run.cli.make_context('test', [], None,
                                        obj=dict(testing_mode=True))
             ctx = run.cli.invoke(ctx)
@@ -162,7 +162,7 @@ class TestRun(unittest.TestCase):
             self.assertIsNone(e)
         finally:
             del os.environ['PHANTOMJS_NAME']
-            del os.environ['PHANTOMJS_PORT']
+            del os.environ['PHANTOMJS_PORT_25555_TCP']
 
     def test_90_docker_scheduler(self):
         try:
@@ -210,11 +210,11 @@ class TestRun(unittest.TestCase):
                 break
 
             limit = 30
-            data = requests.get('http://localhost:5000/counter?time=5m&type=sum')
+            data = requests.get('http://localhost:5000/counter')
             self.assertEqual(data.status_code, 200)
-            while data.json().get('data_sample_handler', {}).get('success', 0) < 5:
+            while data.json().get('data_sample_handler', {}).get('5m', {}).get('success', 0) < 5:
                 time.sleep(1)
-                data = requests.get('http://localhost:5000/counter?time=5m&type=sum')
+                data = requests.get('http://localhost:5000/counter')
                 limit -= 1
                 if limit <= 0:
                     break

@@ -17,7 +17,7 @@ if (system.args.length !== 2) {
   console.debug = function(){};
 
   service = server.listen(port, {
-    'keepAlive': true
+    'keepAlive': false
   }, function (request, response) {
     phantom.clearCookies();
 
@@ -34,6 +34,14 @@ if (system.args.length !== 2) {
       response.closeGracefully();
       return;
     }
+    
+    var first_response = null,
+        finished = false,
+        page_loaded = false,
+        start_time = Date.now(),
+        end_time = null,
+        script_executed = false,
+        script_result = null;
 
     var fetch = JSON.parse(request.postRaw);
     console.debug(JSON.stringify(fetch, null, 2));
@@ -42,25 +50,19 @@ if (system.args.length !== 2) {
     var page = webpage.create();
     page.viewportSize = {
       width: 1024,
-      height: 768
+      height: 768000
     }
     if (fetch.headers && fetch.headers['User-Agent']) {
       page.settings.userAgent = fetch.headers['User-Agent'];
     }
+    // this may cause memory leak: https://github.com/ariya/phantomjs/issues/12903
     page.settings.loadImages = fetch.load_images ? true : false;
     page.settings.resourceTimeout = fetch.timeout ? fetch.timeout * 1000 : 120*1000;
     if (fetch.headers) {
       page.customHeaders = fetch.headers;
     }
-    
+
     // add callbacks
-    var first_response = null,
-        finished = false,
-        page_loaded = false,
-        start_time = Date.now(),
-        end_time = null,
-        script_executed = false,
-        script_result = null;
     page.onInitialized = function() {
       if (!script_executed && fetch.js_script && fetch.js_run_at === "document-start") {
         script_executed = true;
@@ -94,7 +96,7 @@ if (system.args.length !== 2) {
         setTimeout(make_result, wait_before_end+10, page);
       }
     }
-    page.onResourceError=page.onResourceTimeout=function(response) {
+    page.onResourceError = page.onResourceTimeout=function(response) {
       console.info("Request error: #"+response.id+" ["+response.errorCode+"="+response.errorString+"]"+response.url);
       if (first_response === null) {
         first_response = response;
@@ -105,12 +107,11 @@ if (system.args.length !== 2) {
         setTimeout(make_result, wait_before_end+10, page);
       }
     }
+
+    // make sure request will finished
     setTimeout(function(page) {
-      if (first_response) {
-        end_time = Date.now()-1;
-        make_result(page);
-      }
-    }, page.settings.resourceTimeout, page);
+      make_result(page);
+    }, page.settings.resourceTimeout + 100, page);
 
     // send request
     page.open(fetch.url, {
@@ -120,12 +121,17 @@ if (system.args.length !== 2) {
 
     // make response
     function make_result(page) {
-      if (!!!end_time || finished) {
+      if (finished) {
         return;
       }
-      if (end_time > Date.now()) {
-        setTimeout(make_result, Date.now() - end_time, page);
-        return;
+      if (Date.now() - start_time < page.settings.resourceTimeout) {
+        if (!!!end_time) {
+          return;
+        }
+        if (end_time > Date.now()) {
+          setTimeout(make_result, Date.now() - end_time, page);
+          return;
+        }
       }
 
       var result = {};
@@ -145,22 +151,17 @@ if (system.args.length !== 2) {
         }
       }
 
+      page.close();
+      finished = true;
       console.log("["+result.status_code+"] "+result.orig_url+" "+result.time)
 
-      var body = unescape(encodeURIComponent(JSON.stringify(result, null, 2)));
-      response.statusCode = 200;
-      response.headers = {
+      var body = JSON.stringify(result, null, 2);
+      response.writeHead(200, {
         'Cache': 'no-cache',
         'Content-Type': 'application/json',
-        'Connection': 'Keep-Alive',
-        'Keep-Alive': 'timeout=5, max=100',
-        'Content-Length': body.length
-      };
-      response.setEncoding("binary");
+      });
       response.write(body);
       response.closeGracefully();
-      finished = true;
-      page.close();
     }
 
     function _make_result(page) {

@@ -1,4 +1,4 @@
-FROM dockerfile/ubuntu
+FROM cmfatih/phantomjs
 MAINTAINER binux <roy@binux.me>
 
 # install python
@@ -8,7 +8,7 @@ RUN apt-get update && \
 
 # install requirements
 ADD requirements.txt /opt/pyspider/requirements.txt
-RUN pip install --allow-all-external -r /opt/pyspider/requirements.txt
+RUN pip install -r /opt/pyspider/requirements.txt
 
 # add all repo
 ADD ./ /opt/pyspider
@@ -20,4 +20,4 @@ RUN pip install .
 VOLUME ["/opt/pyspider"]
 ENTRYPOINT ["pyspider"]
 
-EXPOSE 5000 23333 24444
+EXPOSE 5000 23333 24444 25555

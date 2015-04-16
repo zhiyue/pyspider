@@ -61,6 +61,8 @@ def connect_rpc(ctx, param, value):
 @click.group(invoke_without_command=True)
 @click.option('-c', '--config', callback=read_config, type=click.File('r'),
               help='a json file with default values for subcommands. {"webui": {"port":5001}}')
+@click.option('--logging-config', default=os.path.join(os.path.dirname(__file__), "logging.conf"),
+              help="logging config file for built-in python logging module", show_default=True)
 @click.option('--debug', envvar='DEBUG', default=False, is_flag=True, help='debug mode')
 @click.option('--queue-maxsize', envvar='QUEUE_MAXSIZE', default=100,
               help='maxsize of queue')
@@ -72,6 +74,8 @@ def connect_rpc(ctx, param, value):
               help='database url for resultdb, default: sqlite')
 @click.option('--amqp-url', envvar='AMQP_URL',
               help='amqp url for rabbitmq, default: built-in Queue')
+@click.option('--beanstalk', envvar='BEANSTALK_HOST',
+              help='beanstalk config for beanstalk queue, defalt: localhost:11300')
 @click.option('--phantomjs-proxy', envvar='PHANTOMJS_PROXY', help="phantomjs proxy ip:port")
 @click.option('--data-path', default='./data', help='data dir path')
 @click.version_option(version=pyspider.__version__, prog_name=pyspider.__name__)
@@ -80,7 +84,7 @@ def cli(ctx, **kwargs):
     """
     A powerful spider system in python.
     """
-    logging.config.fileConfig(os.path.join(os.path.dirname(__file__), "logging.conf"))
+    logging.config.fileConfig(kwargs['logging_config'])
 
     # get db from env
     for db in ('taskdb', 'projectdb', 'resultdb'):
@@ -130,6 +134,12 @@ def cli(ctx, **kwargs):
                      'fetcher2processor', 'processor2result'):
             kwargs[name] = utils.Get(lambda name=name: Queue(name, amqp_url=amqp_url,
                                                              maxsize=kwargs['queue_maxsize']))
+    elif kwargs.get('beanstalk'):
+        from pyspider.libs.beanstalk import Queue
+        for name in ('newtask_queue', 'status_queue', 'scheduler2fetcher',
+                     'fetcher2processor', 'processor2result'):
+            kwargs[name] = utils.Get(lambda name=name: Queue(name, host=kwargs.get('beanstalk'),
+                                                             maxsize=kwargs['queue_maxsize']))
     else:
         from multiprocessing import Queue
         for name in ('newtask_queue', 'status_queue', 'scheduler2fetcher',
@@ -140,7 +150,7 @@ def cli(ctx, **kwargs):
     if kwargs.get('phantomjs_proxy'):
         pass
     elif os.environ.get('PHANTOMJS_NAME'):
-        kwargs['phantomjs_proxy'] = os.environ['PHANTOMJS_PORT'][len('tcp://'):]
+        kwargs['phantomjs_proxy'] = os.environ['PHANTOMJS_PORT_25555_TCP'][len('tcp://'):]
 
     ctx.obj = utils.ObjectDict(ctx.obj or {})
     ctx.obj['instances'] = []
@@ -312,6 +322,11 @@ def webui(ctx, host, port, cdn, scheduler_rpc, fetcher_rpc, max_rate, max_burst,
         app.config['webui_password'] = password
     app.config['need_auth'] = need_auth
 
+    # inject queues for webui
+    for name in ('newtask_queue', 'status_queue', 'scheduler2fetcher',
+                 'fetcher2processor', 'processor2result'):
+        app.config['queues'][name] = getattr(g, name, None)
+
     # fetcher rpc
     if isinstance(fetcher_rpc, six.string_types):
         import umsgpack
@@ -361,28 +376,40 @@ def phantomjs(ctx, phantomjs_path, port):
     """
     import subprocess
     g = ctx.obj
-
+    _quit = []
     phantomjs_fetcher = os.path.join(
         os.path.dirname(pyspider.__file__), 'fetcher/phantomjs_fetcher.js')
+    cmd = [phantomjs_path,
+           '--ssl-protocol=any',
+           '--disk-cache=true',
+           # this may cause memory leak: https://github.com/ariya/phantomjs/issues/12903
+           #'--load-images=false',
+           phantomjs_fetcher, str(port)]
+
     try:
-        _phantomjs = subprocess.Popen([phantomjs_path,
-                                       "--ssl-protocol=any",
-                                       phantomjs_fetcher,
-                                       str(port)])
+        _phantomjs = subprocess.Popen(cmd)
     except OSError:
         return None
 
     def quit(*args, **kwargs):
+        _quit.append(1)
         _phantomjs.kill()
         _phantomjs.wait()
         logging.info('phantomjs existed.')
+
+    if not g.get('phantomjs_proxy'):
+        g['phantomjs_proxy'] = 'localhost:%s' % port
 
     phantomjs = utils.ObjectDict(port=port, quit=quit)
     g.instances.append(phantomjs)
     if g.get('testing_mode'):
         return phantomjs
 
-    _phantomjs.wait()
+    while True:
+        _phantomjs.wait()
+        if _quit:
+            break
+        _phantomjs = subprocess.Popen(cmd)
 
 
 @cli.command()
@@ -412,12 +439,8 @@ def all(ctx, fetcher_num, processor_num, result_worker_num, run_in):
 
     try:
         # phantomjs
-        g['testing_mode'] = True
         phantomjs_config = g.config.get('phantomjs', {})
-        phantomjs_obj = ctx.invoke(phantomjs, **phantomjs_config)
-        if phantomjs_obj and not g.get('phantomjs_proxy'):
-            g['phantomjs_proxy'] = 'localhost:%s' % phantomjs_obj.port
-        g['testing_mode'] = False
+        threads.append(run_in(ctx.invoke, phantomjs, **phantomjs_config))
 
         # result worker
         result_worker_config = g.config.get('result_worker', {})
@@ -531,6 +554,7 @@ def bench(ctx, fetcher_num, processor_num, result_worker_num, run_in, total, sho
     logging.getLogger('processor').setLevel(logging.ERROR)
     logging.getLogger('result').setLevel(logging.ERROR)
     logging.getLogger('webui').setLevel(logging.ERROR)
+    logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
     try:
         threads = []

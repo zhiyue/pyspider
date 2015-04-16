@@ -17,7 +17,27 @@ index_fields = ['name', 'group', 'status', 'comments', 'rate', 'burst', 'updatet
 @app.route('/')
 def index():
     projectdb = app.config['projectdb']
+
     return render_template("index.html", projects=projectdb.get_all(fields=index_fields))
+
+
+@app.route('/queues')
+def get_queues():
+    def try_get_qsize(queue):
+        if queue is None:
+            return 'None'
+        try:
+            return queue.qsize()
+        except NotImplementedError:
+            return 'Not Available For OSX'
+        except Exception as e:
+            return "%r" % e
+
+    result = {}
+    queues = app.config.get('queues', {})
+    for key in queues:
+        result[key] = try_get_qsize(queues[key])
+    return json.dumps(result), 200, {'Content-Type': 'application/json'}
 
 
 @app.route('/update', methods=['POST', ])
@@ -71,14 +91,23 @@ def counter():
     if rpc is None:
         return json.dumps({})
 
-    time = request.args['time']
-    type = request.args.get('type', 'sum')
-
+    result = {}
     try:
-        return json.dumps(rpc.counter(time, type)), 200, {'Content-Type': 'application/json'}
+        for project, counter in rpc.counter('5m_time', 'avg').items():
+            result.setdefault(project, {})['5m_time'] = counter
+        for project, counter in rpc.counter('5m', 'sum').items():
+            result.setdefault(project, {})['5m'] = counter
+        for project, counter in rpc.counter('1h', 'sum').items():
+            result.setdefault(project, {})['1h'] = counter
+        for project, counter in rpc.counter('1d', 'sum').items():
+            result.setdefault(project, {})['1d'] = counter
+        for project, counter in rpc.counter('all', 'sum').items():
+            result.setdefault(project, {})['all'] = counter
     except socket.error as e:
         app.logger.warning('connect to scheduler rpc error: %r', e)
         return json.dumps({}), 200, {'Content-Type': 'application/json'}
+
+    return json.dumps(result), 200, {'Content-Type': 'application/json'}
 
 
 @app.route('/run', methods=['POST', ])

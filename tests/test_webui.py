@@ -199,29 +199,14 @@ class TestWebUI(unittest.TestCase):
                     .get('test_project', {}).get('success', 0) > 5:
                 break
 
-        rv = self.app.get('/counter?time=5m&type=sum')
+        rv = self.app.get('/counter')
         self.assertEqual(rv.status_code, 200)
         data = json.loads(utils.text(rv.data))
         self.assertGreater(len(data), 0)
-        self.assertGreater(data['test_project']['success'], 3)
-
-        rv = self.app.get('/counter?time=1h&type=sum')
-        self.assertEqual(rv.status_code, 200)
-        data = json.loads(utils.text(rv.data))
-        self.assertGreater(len(data), 0)
-        self.assertGreater(data['test_project']['success'], 3)
-
-        rv = self.app.get('/counter?time=1d&type=sum')
-        self.assertEqual(rv.status_code, 200)
-        data = json.loads(utils.text(rv.data))
-        self.assertGreater(len(data), 0)
-        self.assertGreater(data['test_project']['success'], 3)
-
-        rv = self.app.get('/counter?time=all&type=sum')
-        self.assertEqual(rv.status_code, 200)
-        data = json.loads(utils.text(rv.data))
-        self.assertGreater(len(data), 0)
-        self.assertGreater(data['test_project']['success'], 3)
+        self.assertGreater(data['test_project']['5m']['success'], 3)
+        self.assertGreater(data['test_project']['1h']['success'], 3)
+        self.assertGreater(data['test_project']['1d']['success'], 3)
+        self.assertGreater(data['test_project']['all']['success'], 3)
 
     def test_a20_tasks(self):
         rv = self.app.get('/tasks')
@@ -280,6 +265,18 @@ class TestWebUI(unittest.TestCase):
         rv = self.app.get('/results/dump/test_project.json')
         self.assertEqual(rv.status_code, 200)
         self.assertIn(b'"taskid":', rv.data)
+
+    def test_a32_export_json_style_full(self):
+        rv = self.app.get('/results/dump/test_project.json?style=full')
+        self.assertEqual(rv.status_code, 200)
+        data = json.loads(rv.data.decode('utf8'))
+        self.assertGreater(len(data), 1)
+
+    def test_a34_export_json_style_full_limit_1(self):
+        rv = self.app.get('/results/dump/test_project.json?style=full&limit=1&offset=1')
+        self.assertEqual(rv.status_code, 200)
+        data = json.loads(rv.data.decode('utf8'))
+        self.assertEqual(len(data), 1)
 
     def test_a40_export_url_json(self):
         rv = self.app.get('/results/dump/test_project.txt')
