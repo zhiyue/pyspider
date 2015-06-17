@@ -49,14 +49,14 @@ if (system.args.length !== 2) {
     // create and set page
     var page = webpage.create();
     page.viewportSize = {
-      width: 1024,
-      height: 768000
+      width: fetch.js_viewport_width || 1024,
+      height: fetch.js_viewport_height || 768*3
     }
     if (fetch.headers && fetch.headers['User-Agent']) {
       page.settings.userAgent = fetch.headers['User-Agent'];
     }
     // this may cause memory leak: https://github.com/ariya/phantomjs/issues/12903
-    page.settings.loadImages = fetch.load_images ? true : false;
+    page.settings.loadImages = fetch.load_images === undefined ? true : fetch.load_images;
     page.settings.resourceTimeout = fetch.timeout ? fetch.timeout * 1000 : 120*1000;
     if (fetch.headers) {
       page.customHeaders = fetch.headers;

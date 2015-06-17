@@ -8,8 +8,8 @@
 import six
 import time
 
-from sqlalchemy import (create_engine, MetaData, Table, Column, Index,
-                        Integer, String, Float, Text, sql, func)
+from sqlalchemy import create_engine, MetaData, Table, Column, String, Float, Text
+from sqlalchemy.engine.url import make_url
 from pyspider.libs import utils
 from pyspider.database.base.projectdb import ProjectDB as BaseProjectDB
 from .sqlalchemybase import result2dict
@@ -32,16 +32,29 @@ class ProjectDB(BaseProjectDB):
                            Column('comments', String(1024)),
                            Column('rate', Float(11)),
                            Column('burst', Float(11)),
-                           Column('updatetime', Float(32))
+                           Column('updatetime', Float(32)),
+                           mysql_engine='InnoDB',
+                           mysql_charset='utf8'
                            )
-        self.engine = create_engine(url, convert_unicode=True)
+
+        self.url = make_url(url)
+        if self.url.database:
+            database = self.url.database
+            self.url.database = None
+            engine = create_engine(self.url, convert_unicode=False)
+            engine.execute("CREATE DATABASE IF NOT EXISTS %s" % database)
+            self.url.database = database
+        self.engine = create_engine(url, convert_unicode=False)
         self.table.create(self.engine, checkfirst=True)
 
     @staticmethod
     def _parse(data):
-        for key, value in list(six.iteritems(data)):
-            if isinstance(value, six.binary_type):
-                data[key] = utils.text(value)
+        if six.PY3:
+            for key, value in list(six.iteritems(data)):
+                if isinstance(value, six.binary_type):
+                    data[utils.text(key)] = utils.text(value)
+                else:
+                    data[utils.text(key)] = value
         return data
 
     @staticmethod

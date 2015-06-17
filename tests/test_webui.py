@@ -88,12 +88,32 @@ class TestWebUI(unittest.TestCase):
 
         m = re.search(r'var task_content = (.*);\n', utils.text(rv.data))
         self.assertIsNotNone(m)
-        self.__class__.task_content = json.loads(m.group(1))
+        self.assertIn('test_project', json.loads(m.group(1)))
+
         m = re.search(r'var script_content = (.*);\n', utils.text(rv.data))
         self.assertIsNotNone(m)
-        self.__class__.script_content = (json.loads(m.group(1))
-                                         .replace('http://scrapy.org/',
-                                                  'http://127.0.0.1:14887/pyspider/test.html'))
+        self.assertIn('__START_URL__', json.loads(m.group(1)))
+
+    def test_25_debug_post(self):
+        rv = self.app.post('/debug/test_project', data={
+            'project-name': 'other_project',
+            'start-urls': 'http://127.0.0.1:14887/pyspider/test.html',
+            'script-mode': 'script',
+        })
+        self.assertEqual(rv.status_code, 200)
+        self.assertIn(b'debugger', rv.data)
+        self.assertIn(b'var task_content = ', rv.data)
+        self.assertIn(b'var script_content = ', rv.data)
+
+        m = re.search(r'var task_content = (.*);\n', utils.text(rv.data))
+        self.assertIsNotNone(m)
+        self.assertIn('test_project', m.group(1))
+        self.__class__.task_content = json.loads(m.group(1))
+
+        m = re.search(r'var script_content = (.*);\n', utils.text(rv.data))
+        self.assertIsNotNone(m)
+        self.assertIn('127.0.0.1:14887', m.group(1))
+        self.__class__.script_content = json.loads(m.group(1))
 
     def test_30_run(self):
         rv = self.app.post('/debug/test_project/run', data={
@@ -106,6 +126,26 @@ class TestWebUI(unittest.TestCase):
         self.assertGreater(len(data['follows']), 0)
         self.__class__.task_content2 = data['follows'][0]
 
+    def test_32_run_bad_task(self):
+        rv = self.app.post('/debug/test_project/run', data={
+            'script': self.script_content,
+            'task': self.task_content+'asdfasdf312!@#'
+        })
+        self.assertEqual(rv.status_code, 200)
+        data = json.loads(utils.text(rv.data))
+        self.assertGreater(len(data['logs']), 0)
+        self.assertEqual(len(data['follows']), 0)
+
+    def test_33_run_bad_script(self):
+        rv = self.app.post('/debug/test_project/run', data={
+            'script': self.script_content+'adfasfasdf',
+            'task': self.task_content
+        })
+        self.assertEqual(rv.status_code, 200)
+        data = json.loads(utils.text(rv.data))
+        self.assertGreater(len(data['logs']), 0)
+        self.assertEqual(len(data['follows']), 0)
+
     def test_35_run_http_task(self):
         rv = self.app.post('/debug/test_project/run', data={
             'script': self.script_content,
@@ -113,7 +153,7 @@ class TestWebUI(unittest.TestCase):
         })
         self.assertEqual(rv.status_code, 200)
         data = json.loads(utils.text(rv.data))
-        self.assertIn(b'follows', rv.data)
+        self.assertIn('follows', data)
 
     def test_40_save(self):
         rv = self.app.post('/debug/test_project/save', data={
@@ -121,6 +161,25 @@ class TestWebUI(unittest.TestCase):
         })
         self.assertEqual(rv.status_code, 200)
         self.assertIn(b'ok', rv.data)
+
+    def test_42_get(self):
+        rv = self.app.get('/debug/test_project/get')
+        self.assertEqual(rv.status_code, 200)
+        data = json.loads(utils.text(rv.data))
+        self.assertIn('script', data)
+        self.assertEqual(data['script'], self.script_content)
+
+    def test_45_run_with_saved_script(self):
+        rv = self.app.post('/debug/test_project/run', data={
+            'webdav_mode': 'true',
+            'script': '',
+            'task': self.task_content
+        })
+        self.assertEqual(rv.status_code, 200)
+        data = json.loads(utils.text(rv.data))
+        self.assertIn(b'follows', rv.data)
+        self.assertGreater(len(data['follows']), 0)
+        self.__class__.task_content2 = data['follows'][0]
 
     def test_50_index_page_list(self):
         rv = self.app.get('/')
